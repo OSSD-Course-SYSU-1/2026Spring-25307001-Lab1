@@ -1,0 +1,1000 @@
+/**
+ * 宠物养成游戏 - 主入口
+ * 
+ * 【功能概述】
+ * 1. 开局剧情：神秘包裹 → 选蛋 → 孵化 → 主养成
+ * 2. 多端适配：手机、平板、智能手表自适应布局
+ * 3. 分布式流转：continuable配置实现跨设备接续
+ * 4. 全代码绘制：Shape/Path绘制所有UI，无外部图片
+ * 
+ * 【动画实现原理】
+ * - 使用@State变量控制动画属性
+ * - animateTo函数实现平滑过渡
+ * - 定时器实现循环动画
+ * 
+ * 【成长切换逻辑】
+ * - 幼年期：喂食0-10次
+ * - 青年期：喂食11-25次
+ * - 成年期：喂食26次以上
+ * 每个阶段宠物体型、五官、细节不同
+ */
+
+import { 
+  PetType, GrowthStage, GameState, 
+  FOOD_LIST, SKIN_LIST, ValueConfig, GrowthConfig, GameTimeConfig 
+} from '../common/Constants';
+import { PathUtils, ColorUtils, AdaptiveUtils } from '../utils/AdaptiveUtils';
+import { GlobalGameData, PetData, GameStatus, TimeManager } from '../model/GameState';
+import { 
+  getRandomInteractionAnimation, 
+  getRandomIdleAnimation, 
+  formatTime 
+} from '../utils/AnimationManager';
+import { GameStorage, GameData } from '../utils/GameStorage';
+import common from '@ohos.app.ability.common';
+import router from '@ohos.router';
+
+// 导入组件
+import { GradientBackground, WaveBackground } from '../components/BaseShapes';
+import { PackagePopup, SelectEggPopup, IncubatorPopup } from '../components/PopupComponents';
+import { FoodShop, SkinShop } from '../components/ShopComponents';
+import { ValueDisplay, PetDisplay, FunctionButtonBar, GrowthIndicator } from '../components/MainPage';
+import { IntroDoorAnimation } from '../components/IntroAnimation';
+import { IncubatorRoomBackground, GardenBackground, RestaurantBackground, BedroomBackground } from '../components/SceneBackgrounds';
+
+@Entry
+@Component
+struct Index {
+  // ==================== 游戏状态 ====================
+  @State gameState: GameState = GameState.INTRO;
+  @State petType: PetType = PetType.OCTO;
+  @State growthStage: GrowthStage = GrowthStage.BABY;
+  
+  // ==================== 宠物数值 ====================
+  @State hunger: number = 80;
+  @State happiness: number = 70;
+  @State coins: number = 500;
+  @State feedCount: number = 0;
+  
+  // ==================== 皮肤系统 ====================
+  @State currentSkinId: number = 0;
+  @State ownedSkins: number[] = [0];
+  
+  // ==================== 时间系统 ====================
+  @State gameTime: string = '08:00';
+  @State gameHour: number = 8;
+  @State isSleeping: boolean = false;
+  
+  // ==================== 孵化系统 ====================
+  @State selectedEgg: PetType = PetType.OCTO;
+  @State incubateProgress: number = 0;
+  @State incubateStartTime: number = 0;
+  @State remainingTime: string = '15:00';
+  
+  // ==================== 动画状态 ====================
+  @State animationScale: number = 1.0;
+  @State animationTranslateX: number = 0;
+  @State animationTranslateY: number = 0;
+  @State animationRotate: number = 0;
+  @State showHeart: boolean = false;
+  @State currentAnimation: string = '';
+  
+  // ==================== 弹窗状态 ====================
+  @State popupProgress: number = 0;
+  @State showFoodShop: boolean = false;
+  @State showSkinShop: boolean = false;
+  
+  // ==================== 活动状态 ====================
+  @State currentActivity: string = 'interact'; // interact, feed, sleep
+  
+  // ==================== 设备适配 ====================
+  @State screenWidth: number = 360;
+  @State screenHeight: number = 640;
+  @State isWatch: boolean = false;
+  
+  // ==================== 定时器ID ====================
+  private gameTimer: number = -1;
+  private animationTimer: number = -1;
+  private idleTimer: number = -1;
+  private idleActionIndex: number = 0;
+  
+  // 闲置动作列表
+  private idleActions: string[] = ['blink', 'bounce', 'wobble', 'wave', 'yawn', 'tilt'];
+  
+  // ==================== 生命周期 ====================
+  async aboutToAppear() {
+    // 初始化设备信息
+    this.initDevice();
+    
+    // 初始化游戏存储并加载数据
+    await this.initGameStorage();
+    
+    // 启动游戏循环
+    this.startGameLoop();
+  }
+  
+  aboutToDisappear() {
+    // 保存游戏数据
+    this.saveGameData();
+    
+    // 清理定时器
+    if (this.gameTimer !== -1) {
+      clearInterval(this.gameTimer);
+    }
+    if (this.animationTimer !== -1) {
+      clearInterval(this.animationTimer);
+    }
+    if (this.idleTimer !== -1) {
+      clearInterval(this.idleTimer);
+    }
+  }
+  
+  // 初始化游戏存储
+  private async initGameStorage() {
+    try {
+      // 获取上下文
+      const context = getContext(this) as common.UIAbilityContext;
+      
+      // 初始化GameStorage
+      await GameStorage.getInstance().init(context);
+      
+      // 从路由参数获取存档ID
+      const params = router.getParams() as Record<string, Object>;
+      const saveId = params['saveId'] as number;
+      const isNew = params['isNew'] as boolean;
+      
+      if (saveId) {
+        // 设置当前存档
+        GameStorage.getInstance().setCurrentSave(saveId);
+        
+        // 如果不是新游戏，加载存档数据
+        if (!isNew) {
+          const savedData = await GameStorage.getInstance().loadGameData();
+          if (savedData) {
+            // 恢复游戏状态（string转枚举）
+            this.gameState = this.stringToGameState(savedData.gameState);
+            this.petType = this.stringToPetType(savedData.petType);
+            this.selectedEgg = this.stringToPetType(savedData.selectedEgg);
+            this.growthStage = this.stringToGrowthStage(savedData.growthStage);
+            this.hunger = savedData.hunger;
+            this.happiness = savedData.happiness;
+            this.coins = savedData.coins;
+            this.ownedSkins = savedData.ownedSkins;
+            this.currentSkinId = savedData.currentSkinId;
+            this.incubateStartTime = savedData.incubateStartTime;
+            this.incubateProgress = savedData.incubateProgress;
+            this.isSleeping = savedData.isSleeping;
+            
+            console.log('=== 游戏数据恢复成功 ===');
+          }
+        }
+      } else {
+        console.error('=== 未获取到存档ID ===');
+      }
+    } catch (error) {
+      console.error('=== 初始化游戏存储失败: ' + JSON.stringify(error) + ' ===');
+    }
+  }
+  
+  // 字符串转GameState
+  private stringToGameState(str: string): GameState {
+    switch (str) {
+      case 'intro': return GameState.INTRO;
+      case 'selectEgg': return GameState.SELECT_EGG;
+      case 'incubating': return GameState.INCUBATING;
+      case 'hatching': return GameState.HATCHING;
+      case 'main': return GameState.MAIN;
+      case 'foodShop': return GameState.FOOD_SHOP;
+      case 'skinShop': return GameState.SKIN_SHOP;
+      case 'bathing': return GameState.BATHING;
+      default: return GameState.INTRO;
+    }
+  }
+  
+  // 字符串转PetType
+  private stringToPetType(str: string): PetType {
+    switch (str) {
+      case 'Octo': return PetType.OCTO;
+      case 'Serp': return PetType.SERP;
+      case 'Robin': return PetType.ROBIN;
+      default: return PetType.OCTO;
+    }
+  }
+  
+  // 字符串转GrowthStage
+  private stringToGrowthStage(str: string): GrowthStage {
+    switch (str) {
+      case 'baby': return GrowthStage.BABY;
+      case 'youth': return GrowthStage.YOUTH;
+      case 'adult': return GrowthStage.ADULT;
+      default: return GrowthStage.BABY;
+    }
+  }
+  
+  // 保存游戏数据
+  private async saveGameData() {
+    if (this.gameState === GameState.INTRO) {
+      // 初始状态不保存
+      return;
+    }
+    
+    const data: GameData = {
+      gameState: this.gameState as string,
+      petType: this.petType as string,
+      selectedEgg: this.selectedEgg as string,
+      growthStage: this.growthStage as string,
+      hunger: this.hunger,
+      happiness: this.happiness,
+      coins: this.coins,
+      ownedSkins: this.ownedSkins,
+      currentSkinId: this.currentSkinId,
+      incubateStartTime: this.incubateStartTime,
+      incubateProgress: this.incubateProgress,
+      isSleeping: this.isSleeping,
+      lastSaveTime: Date.now()
+    };
+    
+    await GameStorage.getInstance().saveGameData(data);
+  }
+  
+  // 初始化设备信息
+  private initDevice() {
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      // 通过窗口获取真实屏幕尺寸
+      context.resourceManager.getDeviceCapability();
+      // 使用窗口管理器获取窗口信息
+      this.screenWidth = 360;
+      this.screenHeight = 640;
+      
+      // 尝试获取实际窗口尺寸
+      try {
+        const mainWindow = context.windowStage.getMainWindowSync();
+        const properties = mainWindow.getWindowProperties();
+        const rect = properties.windowRect;
+        this.screenWidth = rect.width;
+        this.screenHeight = rect.height;
+      } catch (e) {
+        // 获取失败使用默认值
+        console.log('获取窗口尺寸失败，使用默认值');
+      }
+      
+      AdaptiveUtils.init(this.screenWidth, this.screenHeight);
+      this.isWatch = AdaptiveUtils.isWatch();
+      console.log(`屏幕尺寸: ${this.screenWidth} x ${this.screenHeight}, 是否手表: ${this.isWatch}`);
+    } catch (error) {
+      // 出错时使用默认值
+      AdaptiveUtils.init(360, 640);
+      this.isWatch = false;
+    }
+  }
+  
+  // ==================== 游戏主循环 ====================
+  /**
+   * 【游戏时间规则】
+   * 现实15分钟 = 游戏内1天
+   * 每秒更新一次数值
+   */
+  private startGameLoop() {
+    
+    this.gameTimer = setInterval(() => {
+      // 更新游戏时间
+      this.updateGameTime();
+      
+      // 更新数值（非睡眠状态）
+      if (!this.isSleeping && this.gameState === GameState.MAIN) {
+        this.updateValues();
+      }
+      
+      // 更新孵化进度
+      if (this.gameState === GameState.INCUBATING) {
+        this.updateIncubateProgress();
+      }
+      
+      // 开心满值产金币
+      if (this.happiness >= ValueConfig.MAX_HAPPINESS && !this.isSleeping) {
+        // 每10秒产一次金币
+        if (Date.now() % 10000 < 1000) {
+          this.coins += ValueConfig.HAPPINESS_COIN_RATE;
+        }
+      }
+      
+      // 实时保存（每秒保存一次）
+      this.saveGameData();
+    }, 1000);
+    
+    // 启动闲置动画
+    this.startIdleAnimation();
+  }
+  
+  // 启动闲置动画
+  private startIdleAnimation() {
+    // 每3秒执行一次闲置动作
+    this.idleTimer = setInterval(() => {
+      if (this.gameState === GameState.MAIN && !this.isSleeping && !this.showFoodShop && !this.showSkinShop) {
+        this.playIdleAction();
+      }
+    }, 3000);
+  }
+  
+  // 播放闲置动作
+  private playIdleAction() {
+    let action = this.idleActions[this.idleActionIndex];
+    this.idleActionIndex = (this.idleActionIndex + 1) % this.idleActions.length;
+    
+    switch (action) {
+      case 'blink':
+        this.playBlinkAnimation();
+        break;
+      case 'bounce':
+        this.playBounceAnimation();
+        break;
+      case 'wobble':
+        this.playWobbleAnimation();
+        break;
+      case 'wave':
+        this.playWaveAnimation();
+        break;
+      case 'yawn':
+        this.playYawnAnimation();
+        break;
+      case 'tilt':
+        this.playTiltAnimation();
+        break;
+    }
+  }
+  
+  // 眨眼动画
+  private playBlinkAnimation() {
+    // 简单的缩放动画模拟眨眼
+    let scaleY = 1.0;
+    let blinkTimer = setInterval(() => {
+      scaleY = scaleY === 1.0 ? 0.95 : 1.0;
+      this.animationScale = scaleY;
+    }, 100);
+    
+    setTimeout(() => {
+      clearInterval(blinkTimer);
+      this.animationScale = 1.0;
+    }, 300);
+  }
+  
+  // 弹跳动画
+  private playBounceAnimation() {
+    let bounceCount = 0;
+    let bounceTimer = setInterval(() => {
+      this.animationTranslateY = -10 * Math.sin(bounceCount * 0.3);
+      bounceCount++;
+      if (bounceCount > 10) {
+        clearInterval(bounceTimer);
+        this.animationTranslateY = 0;
+      }
+    }, 50);
+  }
+  
+  // 摇摆动画
+  private playWobbleAnimation() {
+    let wobbleCount = 0;
+    let wobbleTimer = setInterval(() => {
+      this.animationRotate = 8 * Math.sin(wobbleCount * 0.3);
+      wobbleCount++;
+      if (wobbleCount > 15) {
+        clearInterval(wobbleTimer);
+        this.animationRotate = 0;
+      }
+    }, 50);
+  }
+  
+  // 挥手动画（触手波动）
+  private playWaveAnimation() {
+    let waveCount = 0;
+    let waveTimer = setInterval(() => {
+      this.animationTranslateX = 5 * Math.sin(waveCount * 0.4);
+      waveCount++;
+      if (waveCount > 20) {
+        clearInterval(waveTimer);
+        this.animationTranslateX = 0;
+      }
+    }, 50);
+  }
+  
+  // 打哈欠动画
+  private playYawnAnimation() {
+    // 伸懒腰
+    this.animationScale = 1.1;
+    this.animationRotate = 5;
+    
+    setTimeout(() => {
+      this.animationRotate = -5;
+    }, 300);
+    
+    setTimeout(() => {
+      this.animationScale = 1.0;
+      this.animationRotate = 0;
+    }, 600);
+  }
+  
+  // 歪头动画
+  private playTiltAnimation() {
+    this.animationRotate = 15;
+    
+    setTimeout(() => {
+      this.animationRotate = 0;
+    }, 500);
+  }
+  
+  // 更新游戏时间
+  private updateGameTime() {
+    const elapsed = Date.now();
+    const gameDays = elapsed / GameTimeConfig.REAL_TIME_PER_GAME_DAY;
+    const dayProgress = gameDays - Math.floor(gameDays);
+    this.gameHour = Math.floor(dayProgress * 24);
+    this.gameTime = `${this.gameHour.toString().padStart(2, '0')}:00`;
+    // 睡眠完全由玩家控制，不再强制
+  }
+  
+  // 更新数值
+  private updateValues() {
+    // 饥饿值下降（每秒下降 0.5/900 ≈ 0.00056）
+    const hungerDecay = ValueConfig.HUNGER_DECAY_RATE / GameTimeConfig.REAL_SECONDS_PER_GAME_DAY;
+    this.hunger = Math.max(0, this.hunger - hungerDecay);
+  }
+  
+  // 更新孵化进度
+  private updateIncubateProgress() {
+    if (this.incubateStartTime === 0) {
+      this.incubateStartTime = Date.now();
+    }
+    
+    const elapsed = Date.now() - this.incubateStartTime;
+    this.incubateProgress = Math.min(1, elapsed / GameTimeConfig.REAL_TIME_PER_GAME_DAY);
+    
+    // 计算剩余时间
+    const remaining = GameTimeConfig.REAL_TIME_PER_GAME_DAY - elapsed;
+    if (remaining > 0) {
+      this.remainingTime = formatTime(remaining / 1000);
+    } else {
+      this.remainingTime = '00:00';
+    }
+    
+    // 孵化完成
+    if (this.incubateProgress >= 1) {
+      this.onIncubateComplete();
+    }
+  }
+
+  // ==================== 构建UI ====================
+  build() {
+    Stack() {
+      // 背景层
+      this.buildBackground()
+      
+      // 主内容层
+      Column() {
+        if (this.gameState === GameState.INTRO) {
+          // 开场包裹
+          this.buildIntroPage()
+        } else if (this.gameState === GameState.SELECT_EGG) {
+          // 选蛋界面
+          this.buildSelectEggPage()
+        } else if (this.gameState === GameState.INCUBATING) {
+          // 孵化中
+          this.buildIncubatingPage()
+        } else if (this.gameState === GameState.MAIN) {
+          // 主养成页面
+          this.buildMainPage()
+        }
+      }
+      .width('100%')
+      .height('100%')
+      
+      // 弹窗层
+      this.buildPopups()
+    }
+    .width('100%')
+    .height('100%')
+  }
+  
+  // 背景层
+  @Builder
+  buildBackground() {
+    Stack() {
+      // 渐变背景
+      Column()
+        .width('100%')
+        .height('100%')
+        .linearGradient({
+          angle: 135,
+          colors: [[ColorUtils.BG_GRADIENT_START, 0.0], [ColorUtils.BG_GRADIENT_END, 1.0]]
+        })
+      
+      // 装饰波浪
+      WaveBackground({
+        waveWidth: this.screenWidth,
+        waveHeight: AdaptiveUtils.heightPercent(10),
+        y: AdaptiveUtils.heightPercent(5),
+        color: '#FFE5EC',
+        amplitude: AdaptiveUtils.spacing(8),
+        frequency: 0.02
+      })
+      .position({ x: 0, y: this.screenHeight - AdaptiveUtils.heightPercent(15) })
+      .opacity(0.5)
+    }
+    .width('100%')
+    .height('100%')
+    .hitTestBehavior(HitTestMode.None) // 不拦截点击事件
+  }
+  
+  // ==================== 开场页面 ====================
+  @Builder
+  buildIntroPage() {
+    // 开场动画：第一人称开门
+    IntroDoorAnimation({
+      doorWidth: AdaptiveUtils.widthPercent(55),
+      doorHeight: AdaptiveUtils.heightPercent(50),
+      onBoxClick: () => {
+        // 点击箱子后切换到选蛋界面
+        this.onPackageOpen();
+      }
+    })
+  }
+  
+  // ==================== 选蛋页面 ====================
+  @Builder
+  buildSelectEggPage() {
+    Column() {
+      Blank().height(AdaptiveUtils.heightPercent(8))
+      
+      SelectEggPopup({
+        popupWidth: AdaptiveUtils.popupWidth(),
+        popupHeight: AdaptiveUtils.popupHeight(0.6),
+        animationProgress: 1,
+        selectedEgg: $selectedEgg,
+        onSelect: () => {
+          this.onEggSelected();
+        },
+        onClose: () => {}
+      })
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Start)
+  }
+  
+  // ==================== 孵化页面 ====================
+  @Builder
+  buildIncubatingPage() {
+    Stack() {
+      // 孵化室背景
+      IncubatorRoomBackground({
+        bgWidth: this.screenWidth,
+        bgHeight: this.screenHeight
+      })
+      
+      // 孵化弹窗
+      Column() {
+        Blank().height(AdaptiveUtils.heightPercent(10))
+        
+        IncubatorPopup({
+          popupWidth: AdaptiveUtils.popupWidth(),
+          popupHeight: AdaptiveUtils.popupHeight(0.55),
+          animationProgress: 1,
+          petType: this.selectedEgg,
+          progress: this.incubateProgress,
+          remainingTime: this.remainingTime
+        })
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Start)
+    }
+    .width('100%')
+    .height('100%')
+  }
+  
+  // ==================== 主养成页面 ====================
+  @Builder
+  buildMainPage() {
+    Stack() {
+      // 根据活动状态显示不同背景
+      if (this.isSleeping) {
+        // 睡眠时显示卧室背景
+        BedroomBackground({
+          bgWidth: this.screenWidth,
+          bgHeight: this.screenHeight
+        })
+      } else if (this.showFoodShop) {
+        // 喂食时显示餐厅背景
+        RestaurantBackground({
+          bgWidth: this.screenWidth,
+          bgHeight: this.screenHeight
+        })
+      } else {
+        // 互动时显示花园背景
+        GardenBackground({
+          bgWidth: this.screenWidth,
+          bgHeight: this.screenHeight
+        })
+      }
+      
+      // 主内容 - 使用百分比布局
+      Column() {
+        // 顶部留白
+        Blank().height(AdaptiveUtils.heightPercent(2))
+        
+        // 数值显示
+        ValueDisplay({
+          displayWidth: AdaptiveUtils.contentWidth(),
+          hunger: this.hunger,
+          happiness: this.happiness,
+          coins: this.coins,
+          gameTime: this.gameTime
+        })
+        
+        // 间距
+        Blank().height(AdaptiveUtils.spacing(8))
+        
+        // 成长阶段
+        GrowthIndicator({
+          growthStage: this.growthStage,
+          feedCount: this.feedCount
+        })
+        
+        // 间距
+        Blank().height(AdaptiveUtils.spacing(12))
+        
+        // 宠物展示区域 - 使用layoutWeight占据剩余空间
+        Column() {
+          PetDisplay({
+            petSize: AdaptiveUtils.getPetSize(),
+            petType: this.petType,
+            growthStage: this.growthStage,
+            isSad: this.isPetSad(),
+            isExcited: this.isPetExcited(),
+            isSleeping: this.isSleeping,
+            skinId: this.currentSkinId,
+            petScale: this.animationScale,
+            translateX: this.animationTranslateX,
+            translateY: this.animationTranslateY,
+            petRotate: this.animationRotate,
+            showHeart: this.showHeart,
+            onPetClick: () => {
+              this.onPetClick();
+            }
+          })
+        }
+        .layoutWeight(1)
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        
+        // 间距
+        Blank().height(AdaptiveUtils.spacing(12))
+        
+        // 功能按钮
+        FunctionButtonBar({
+          barWidth: AdaptiveUtils.contentWidth(),
+          canFeed: this.hunger < ValueConfig.MAX_HUNGER,
+          isSleeping: this.isSleeping,
+          onFeed: () => {
+            this.showFoodShop = true;
+          },
+          onBath: () => {
+            this.onBath();
+          },
+          onDress: () => {
+            this.showSkinShop = true;
+          },
+          onSleep: () => {
+            this.onToggleSleep();
+          }
+        })
+        
+        // 底部留白
+        Blank().height(AdaptiveUtils.heightPercent(2))
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Start)
+    }
+    .width('100%')
+    .height('100%')
+  }
+  
+  // ==================== 弹窗层 ====================
+  @Builder
+  buildPopups() {
+    Stack() {
+      // 食物商店
+      if (this.showFoodShop) {
+        Column() {
+          Blank().height(AdaptiveUtils.heightPercent(12))
+          FoodShop({
+            shopWidth: AdaptiveUtils.popupWidth(),
+            shopHeight: AdaptiveUtils.popupHeight(0.65),
+            coins: this.coins,
+            animationProgress: 1,
+            onBuyFood: (foodId: number) => {
+              this.onBuyFood(foodId);
+            },
+            onClose: () => {
+              this.showFoodShop = false;
+            }
+          })
+        }
+        .width('100%')
+        .height('100%')
+      }
+      
+      // 皮肤商店
+      if (this.showSkinShop) {
+        Column() {
+          Blank().height(AdaptiveUtils.heightPercent(12))
+          SkinShop({
+            shopWidth: AdaptiveUtils.popupWidth(),
+            shopHeight: AdaptiveUtils.popupHeight(0.65),
+            coins: this.coins,
+            ownedSkins: this.ownedSkins,
+            currentSkinId: this.currentSkinId,
+            animationProgress: 1,
+            onBuySkin: (skinId: number) => {
+              this.onBuySkin(skinId);
+            },
+            onWearSkin: (skinId: number) => {
+              this.onWearSkin(skinId);
+            },
+            onClose: () => {
+              this.showSkinShop = false;
+            }
+          })
+        }
+        .width('100%')
+        .height('100%')
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .hitTestBehavior(HitTestMode.None) // 不拦截点击事件
+  }
+  
+  // ==================== 事件处理函数 ====================
+  
+  // 打开包裹
+  private onPackageOpen() {
+    // 切换到选蛋界面
+    this.gameState = GameState.SELECT_EGG;
+  }
+  
+  // 选择蛋
+  private onEggSelected() {
+    // 切换到孵化界面
+    this.gameState = GameState.INCUBATING;
+    this.incubateStartTime = Date.now();
+    this.incubateProgress = 0;
+  }
+  
+  // 孵化完成
+  private onIncubateComplete() {
+    // 切换到主页面
+    this.petType = this.selectedEgg;
+    this.gameState = GameState.MAIN;
+    this.growthStage = GrowthStage.BABY;
+  }
+  
+  // 点击宠物
+  private onPetClick() {
+    if (this.isSleeping) return;
+    
+    // 增加开心值
+    this.happiness = Math.min(ValueConfig.MAX_HAPPINESS, 
+      this.happiness + ValueConfig.CLICK_HAPPINESS);
+    
+    // 显示爱心
+    this.showHeart = true;
+    
+    // 弹跳动画
+    this.animationScale = 1.15;
+    setTimeout(() => {
+      this.animationScale = 1.0;
+      this.showHeart = false;
+    }, 300);
+    
+    // 摇晃动画
+    this.animationRotate = 5;
+    setTimeout(() => {
+      this.animationRotate = -5;
+    }, 100);
+    setTimeout(() => {
+      this.animationRotate = 0;
+    }, 200);
+  }
+  
+  // 购买食物
+  private onBuyFood(foodId: number) {
+    const food = FOOD_LIST.find(f => f.id === foodId);
+    if (!food || this.coins < food.price) return;
+    
+    // 扣除金币
+    this.coins -= food.price;
+    
+    // 增加饥饿值
+    this.hunger = Math.min(ValueConfig.MAX_HUNGER, this.hunger + food.hungerValue);
+    
+    // 增加喂食次数
+    this.feedCount++;
+    
+    // 吃东西动画
+    this.playEatAnimation();
+    
+    // 检查进化
+    this.checkEvolution();
+    
+    // 关闭商店
+    this.showFoodShop = false;
+  }
+  
+  // 播放吃东西动画
+  private playEatAnimation() {
+    // 弹跳动画（咀嚼效果）
+    let bounceCount = 0;
+    let bounceTimer = setInterval(() => {
+      this.animationScale = 1 + 0.05 * Math.sin(bounceCount * 0.5);
+      bounceCount++;
+      if (bounceCount > 10) {
+        clearInterval(bounceTimer);
+        this.animationScale = 1.0;
+      }
+    }, 50);
+    
+    // 开心效果
+    this.showHeart = true;
+    setTimeout(() => {
+      this.showHeart = false;
+    }, 1000);
+  }
+  
+  // 检查进化
+  private checkEvolution() {
+    const newStage = GrowthConfig.getStage(this.feedCount);
+    if (newStage !== this.growthStage) {
+      this.growthStage = newStage;
+    }
+  }
+  
+  // 洗澡
+  private onBath() {
+    // 增加开心值
+    this.happiness = Math.min(ValueConfig.MAX_HAPPINESS, 
+      this.happiness + ValueConfig.BATH_HAPPINESS);
+    
+    // 洗澡动画
+    this.playBathAnimation();
+  }
+  
+  // 播放洗澡动画
+  private playBathAnimation() {
+    // 旋转摇晃（洗澡时的欢快动作）
+    let rotateCount = 0;
+    let rotateTimer = setInterval(() => {
+      this.animationRotate = 10 * Math.sin(rotateCount * 0.3);
+      rotateCount++;
+      if (rotateCount > 20) {
+        clearInterval(rotateTimer);
+        this.animationRotate = 0;
+      }
+    }, 50);
+    
+    // 弹跳
+    let bounceCount = 0;
+    let bounceTimer = setInterval(() => {
+      this.animationScale = 1 + 0.08 * Math.sin(bounceCount * 0.4);
+      bounceCount++;
+      if (bounceCount > 15) {
+        clearInterval(bounceTimer);
+        this.animationScale = 1.0;
+      }
+    }, 50);
+    
+    // 显示爱心
+    this.showHeart = true;
+    setTimeout(() => {
+      this.showHeart = false;
+    }, 1500);
+  }
+  
+  // 切换睡眠
+  private onToggleSleep() {
+    if (!this.isSleeping) {
+      // 进入睡眠
+      this.isSleeping = true;
+      this.playSleepAnimation();
+    } else {
+      // 醒来
+      this.isSleeping = false;
+      this.playWakeAnimation();
+    }
+  }
+  
+  // 播放睡眠动画
+  private playSleepAnimation() {
+    // 缓慢缩小（躺下）
+    let shrinkProgress = 0;
+    let shrinkTimer = setInterval(() => {
+      shrinkProgress += 0.05;
+      this.animationScale = 1 - 0.1 * shrinkProgress;
+      if (shrinkProgress >= 1) {
+        clearInterval(shrinkTimer);
+        this.animationScale = 0.9;
+      }
+    }, 50);
+  }
+  
+  // 播放醒来动画
+  private playWakeAnimation() {
+    // 恢复大小（站起来）
+    let growProgress = 0;
+    let growTimer = setInterval(() => {
+      growProgress += 0.05;
+      this.animationScale = 0.9 + 0.1 * growProgress;
+      if (growProgress >= 1) {
+        clearInterval(growTimer);
+        this.animationScale = 1.0;
+      }
+    }, 50);
+    
+    // 伸懒腰动画
+    setTimeout(() => {
+      this.animationRotate = 10;
+      setTimeout(() => {
+        this.animationRotate = -10;
+        setTimeout(() => {
+          this.animationRotate = 0;
+        }, 150);
+      }, 150);
+    }, 300);
+  }
+  
+  // 购买皮肤
+  private onBuySkin(skinId: number) {
+    const skin = SKIN_LIST.find(s => s.id === skinId);
+    if (!skin || this.coins < skin.price) return;
+    
+    // 扣除金币
+    this.coins -= skin.price;
+    
+    // 添加到已拥有列表
+    if (!this.ownedSkins.includes(skinId)) {
+      this.ownedSkins.push(skinId);
+    }
+  }
+  
+  // 穿戴皮肤
+  private onWearSkin(skinId: number) {
+    if (this.currentSkinId === skinId) {
+      // 脱卸：恢复原生
+      this.currentSkinId = 0;
+    } else {
+      // 穿戴
+      this.currentSkinId = skinId;
+    }
+  }
+  
+  // 判断宠物是否低落
+  private isPetSad(): boolean {
+    return this.hunger < ValueConfig.LOW_HUNGER || 
+           this.happiness < ValueConfig.LOW_HAPPINESS;
+  }
+  
+  // 判断宠物是否兴奋
+  private isPetExcited(): boolean {
+    return this.hunger > 70 && this.happiness > 80;
+  }
+  
+  // 重置动画状态
+  private resetAnimation() {
+    this.animationScale = 1.0;
+    this.animationTranslateX = 0;
+    this.animationTranslateY = 0;
+    this.animationRotate = 0;
+    this.showHeart = false;
+  }
+}

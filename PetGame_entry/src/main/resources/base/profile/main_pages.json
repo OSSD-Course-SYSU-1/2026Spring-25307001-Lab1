@@ -1,0 +1,7 @@
+{
+  "src": [
+    "pages/StartPage",
+    "pages/SaveListPage",
+    "pages/Index"
+  ]
+}
