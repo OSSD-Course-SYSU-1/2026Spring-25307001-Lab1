@@ -59,7 +59,7 @@ export struct CommentListView {
         .edgeEffect(EdgeEffect.Spring)
       }
       
-      // Input area at the bottom
+      // Input area at the bottom with fixed height
       this.CommentInputArea()
     }
     .width('100%')
@@ -120,44 +120,51 @@ export struct CommentListView {
   
   @Builder
   CommentInputArea() {
-    Row() {
-      // Input field
-      TextInput({ 
-        placeholder: '请输入评论...', 
-        text: this.viewModel.currentCommentText 
-      })
-        .layoutWeight(1)
-        .height(40)
-        .backgroundColor('#F5F5F5')
-        .borderRadius(20)
-        .padding({ left: 16, right: 16 })
-        .fontSize(15)
-        .fontColor('#333333')
-        .placeholderColor('#999999')
-        .onChange((value: string) => {
-          this.viewModel.currentCommentText = value;
+    Column() {
+      Row() {
+        // Input field
+        TextInput({ 
+          placeholder: '请输入评论...', 
+          text: this.viewModel.currentCommentText 
         })
-        ..onSubmit(() => {
-          this.viewModel.sendComment();
-        })
-      
-      // Send button
-      Button('发送')
-        .height(40)
-        .width(70)
-        .fontSize(15)
-        .fontColor('#FFFFFF')
-        .backgroundColor('#F67609')
-        .borderRadius(20)
-        .margin({ left: 12 })
-        .enabled(this.viewModel.currentCommentText.trim() !== '')
-        .onClick(() => {
-          this.viewModel.sendComment();
-        })
+          .layoutWeight(1)
+          .height(40)
+          .backgroundColor(Color.White)
+          .borderRadius(20)
+          .border({ width: 1, color: '#E0E0E0' })
+          .padding({ left: 16, right: 16 })
+          .fontSize(15)
+          .fontColor('#333333')
+          .placeholderColor('#999999')
+          .onChange((value: string) => {
+            this.viewModel.currentCommentText = value;
+          })
+          .onSubmit(() => {
+            this.viewModel.sendComment();
+          })
+        
+        // Send button
+        Button('发送')
+          .height(40)
+          .width(70)
+          .fontSize(15)
+          .fontColor('#FFFFFF')
+          .backgroundColor('#F67609')
+          .borderRadius(20)
+          .margin({ left: 12 })
+          .enabled(this.viewModel.currentCommentText.trim() !== '')
+          .onClick(() => {
+            this.viewModel.sendComment();
+          })
+      }
+      .width('100%')
+      .height(56)
+      .padding({ left: 16, right: 16 })
     }
     .width('100%')
-    .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-    .backgroundColor('#FFFFFF')
+    .height(60)
+    .backgroundColor(Color.White)
+    .justifyContent(FlexAlign.Center)
     .border({
       width: { top: 1 },
       color: { top: '#E0E0E0' }

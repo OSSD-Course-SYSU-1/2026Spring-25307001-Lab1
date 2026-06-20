@@ -23,6 +23,14 @@
     {
       "name": "Video_name",
       "value": "Sample videos"
+    },
+    {
+      "name": "distributed_permission_reason",
+      "value": "Allow video playback state to sync across devices for seamless continuation"
+    },
+    {
+      "name": "device_info_permission_reason",
+      "value": "Get device information for distributed video playback"
     }
   ]
 }

@@ -34,6 +34,7 @@ export enum DanmakuType {
 /**
  * Danmaku data model.
  */
+@Observed
 export class DanmakuItem {
   // Unique identifier for the danmaku
   id: string = '';
@@ -60,7 +61,13 @@ export class DanmakuItem {
   positionX: number = 0;
   
   // Speed of scrolling (pixels per second)
-  speed: number = 100;
+  speed: number = 300;
+  
+  // Estimated width based on content length and font size
+  estimatedWidth: number = 0;
+  
+  // Screen width when danmaku was created (for positioning)
+  screenWidth: number = 0;
   
   // Whether the danmaku is visible
   isVisible: boolean = true;
@@ -74,7 +81,8 @@ export class DanmakuItem {
     timestamp: number = 0,
     type: DanmakuType = DanmakuType.NORMAL,
     fontSize: number = 14,
-    duration: number = 5000
+    duration: number = 5000,
+    screenWidth: number = 0
   ) {
     this.id = `danmaku_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     this.content = content;
@@ -83,6 +91,16 @@ export class DanmakuItem {
     this.type = type;
     this.fontSize = fontSize;
     this.duration = duration;
+    this.screenWidth = screenWidth;
+    
+    // Estimate width based on content length and font size
+    // Rough estimation: each character ~0.6 * fontSize in pixels
+    this.estimatedWidth = content.length * fontSize * 0.6;
+    
+    // For scrolling danmaku, start from right side of screen
+    if (type === DanmakuType.NORMAL && screenWidth > 0) {
+      this.positionX = screenWidth; // Start from right edge
+    }
   }
 
   /**
@@ -130,7 +148,7 @@ export class DanmakuSettings {
   defaultType: DanmakuType = DanmakuType.NORMAL;
   
   // Default display duration (in milliseconds)
-  defaultDuration: number = 5000;
+  defaultDuration: number = 10000;
   
   // Opacity (0.0 - 1.0)
   opacity: number = 0.8;

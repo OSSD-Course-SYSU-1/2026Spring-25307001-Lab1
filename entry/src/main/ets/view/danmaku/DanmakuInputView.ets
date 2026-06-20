@@ -13,12 +13,16 @@
  * limitations under the License.
  */
 
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { DanmakuType, DanmakuColorPreset } from '../../model/DanmakuModel';
 import { VideoPlayViewModel } from '../../viewmodel/VideoPlayViewModel';
 
 @Component
 export struct DanmakuInputView {
   @ObjectLink viewModel: VideoPlayViewModel;
+  
+  // TextInput controller for focus control
+  textInputController: TextInputController = new TextInputController();
 
   @Builder
   ColorPicker() {
@@ -61,11 +65,10 @@ export struct DanmakuInputView {
           }
           .width('48vp')
           .height('56vp')
-          .margin({ right: '8vp', bottom: '8vp' })
         })
       }
-      .columnsTemplate('1fr 1fr 1fr 1fr')
-      .rowsTemplate('1fr 1fr')
+      .columnsTemplate('repeat(4, 1fr)')
+      .rowsTemplate('repeat(2, 1fr)')
       .columnsGap('8vp')
       .rowsGap('8vp')
       .width('100%')
@@ -79,7 +82,7 @@ export struct DanmakuInputView {
           .fontColor(Color.White)
           .margin({ right: '8vp' })
 
-        TextInput({ placeholder: '输入十六进制颜色码' })
+        TextInput({ placeholder: '#FFFFFF', text: this.viewModel.selectedDanmakuColor })
           .width('120vp')
           .height('32vp')
           .fontSize('14fp')
@@ -184,7 +187,7 @@ export struct DanmakuInputView {
   InputArea() {
     Column() {
       // Text input
-      TextInput({ placeholder: '输入弹幕内容...', text: this.viewModel.currentDanmakuText })
+      TextInput({ placeholder: '输入弹幕内容...', text: this.viewModel.currentDanmakuText, controller: this.textInputController })
         .width('100%')
         .height('40vp')
         .fontSize('16fp')
@@ -192,6 +195,9 @@ export struct DanmakuInputView {
         .backgroundColor('#333333')
         .borderRadius('8vp')
         .padding({ left: '12vp', right: '12vp' })
+        .focusable(true)
+        .key('danmakuInput')
+        .enableKeyboardOnFocus(true)
         .onChange((value: string) => {
           this.viewModel.updateDanmakuText(value);
         })
@@ -232,6 +238,20 @@ export struct DanmakuInputView {
     }
     .width('100%')
     .padding({ left: '16vp', right: '16vp', top: '12vp', bottom: '12vp' })
+  }
+
+  aboutToAppear(): void {
+    // Set focus to text input when component appears
+    setTimeout(() => {
+      try {
+        const focusController = this.getUIContext().getFocusController();
+        if (focusController) {
+          focusController.requestFocus('danmakuInput');
+        }
+      } catch (error) {
+        hilog.error(0x0000, 'DanmakuInputView', 'Failed to set focus: %{public}s', JSON.stringify(error));
+      }
+    }, 100);
   }
 
   build() {
@@ -279,13 +299,12 @@ export struct DanmakuInputView {
         .width('100%')
       }
       .width('100%')
-      .height('400vp')
+      .height('350vp')
       .backgroundColor('#2A2A2A')
     }
     .width('100%')
-    .height('500vp')
-    .backgroundColor(Color.Transparent)
-    .borderRadius('12vp')
-    .shadow({ radius: '20vp', color: '#000000', offsetX: '0vp', offsetY: '2vp' })
+    .height('350vp')
+    .backgroundColor('#1E1E1E')
+    .borderRadius({ topLeft: '12vp', topRight: '12vp' })
   }
 }

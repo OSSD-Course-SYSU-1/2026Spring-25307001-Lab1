@@ -22,6 +22,12 @@ import { CommonConstants as Const } from '../common/CommonConstants';
 import { VideoPlayViewModel } from '../viewmodel/VideoPlayViewModel';
 import { DanmakuDisplayView } from './danmaku/DanmakuDisplayView';
 import { DanmakuInputView } from './danmaku/DanmakuInputView';
+import { CommentListView } from './comment/CommentListView';
+import { VideoFilterType, FilterInfo } from '../model/VideoFilterModel';
+import { SizeAdapter } from '../common/SizeAdapter';
+import { ResponsiveLayoutManager, BreakpointType } from '../common/ResponsiveLayoutManager';
+import { DistributedStateManager } from '../common/DistributedStateManager';
+import { DistributedControlView } from './DistributedControlView';
 
 const DOMAIN = 0xFF00;
 const TAG = 'VideoPlayView';
@@ -37,15 +43,95 @@ export struct VideoPlayView {
   // The horizontal full-screen playback state flag.
   @Watch('fullScreenSet') @Link isFullScreen: boolean;
   // [End isFullScreen]
+  
+  // 响应式布局管理器
+  private sizeAdapter: SizeAdapter = SizeAdapter.getInstance();
+  private layoutManager: ResponsiveLayoutManager = ResponsiveLayoutManager.getInstance();
+  
+  // 分布式状态管理器
+  private distributedStateManager: DistributedStateManager = DistributedStateManager.getInstance();
+  
+  // 状态保存定时器
+  private stateSaveTimerId: number = -1;
+  
+  // 自适应尺寸状态
+  @State private videoPlayerHeight: string = '56%';
+  @State private controlBarHeight: string = '48vp';
+  @State private controlButtonSize: string = '36vp';
+  @State private controlIconSize: string = '20vp';
+  @State private videoPlayerWidth: string = '100%';
+  @State private shouldShowSidebar: boolean = false;
 
   aboutToAppear(): void {
     this.viewModel.videoSources = this.videoSources;
     this.viewModel.setUIContext(this.getUIContext());
     this.viewModel.initialize();
+    
+    // 初始化响应式布局
+    const context = this.getUIContext().getHostContext();
+    if (context) {
+      this.layoutManager.initialize(context);
+    }
+    this.updateAdaptiveSizes();
+    
+    // 监听断点变化
+    this.layoutManager.onBreakpointChange(() => {
+      this.updateAdaptiveSizes();
+    });
+    
+    // 启动状态自动保存定时器（每5秒保存一次）
+    this.startStateAutoSave();
+    
+    // 启动分布式状态自动同步（每3秒同步一次）
+    this.distributedStateManager.startAutoSync(3000);
+  }
+  
+  /**
+   * 更新自适应尺寸
+   */
+  private updateAdaptiveSizes(): void {
+    this.videoPlayerHeight = this.sizeAdapter.getVideoPlayerHeight();
+    this.controlBarHeight = this.sizeAdapter.getControlBarHeight();
+    this.controlButtonSize = this.sizeAdapter.getControlButtonSize();
+    this.controlIconSize = this.sizeAdapter.getControlIconSize();
+    this.videoPlayerWidth = this.sizeAdapter.getVideoPlayerWidth();
+    this.shouldShowSidebar = this.sizeAdapter.shouldShowSidebar();
   }
 
   aboutToDisappear(): void {
     this.viewModel.cleanup();
+    this.layoutManager.destroy();
+    this.stopStateAutoSave();
+    this.distributedStateManager.stopAutoSync();
+  }
+  
+  /**
+   * 启动状态自动保存
+   */
+  private startStateAutoSave(): void {
+    this.stateSaveTimerId = setInterval(() => {
+      this.saveCurrentState();
+    }, 5000); // 每5秒保存一次
+  }
+  
+  /**
+   * 停止状态自动保存
+   */
+  private stopStateAutoSave(): void {
+    if (this.stateSaveTimerId !== -1) {
+      clearInterval(this.stateSaveTimerId);
+      this.stateSaveTimerId = -1;
+    }
+  }
+  
+  /**
+   * 保存当前播放状态
+   */
+  private saveCurrentState(): void {
+    const playState = this.viewModel.getCurrentPlayState();
+    if (playState) {
+      this.distributedStateManager.savePlayState(playState);
+    }
   }
 
   // [Start fullScreenSet]
@@ -67,6 +153,190 @@ export struct VideoPlayView {
   // [End fullScreenSet]
 
   build() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      // 平板横屏分栏布局
+      if (this.shouldShowSidebar && !this.isFullScreen) {
+        this.TabletLandscapeLayout()
+      } else {
+        // 手机竖屏/全屏布局
+        this.PhonePortraitLayout()
+      }
+      
+      // Danmaku input overlay - placed in stack to ensure it's on top
+      this.DanmakuInputOverlay()
+      
+      // Filter panel overlay - placed in stack to ensure it's on top
+      this.FilterPanelOverlay()
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  /**
+   * 平板横屏左右分栏布局（类似B站iPad横屏）
+   */
+  @Builder
+  TabletLandscapeLayout() {
+    Row() {
+      // 左侧：视频播放区域
+      Column() {
+        Stack({ alignContent: Alignment.Center }) {
+          this.XComponentView()
+          // Danmaku display layer
+          DanmakuDisplayView({
+            viewModel: this.viewModel,
+            isFullScreen: $isFullScreen
+          })
+          this.ControlOverlay()
+          this.SpeedListOverlay()
+        }
+        .width('100%')
+        .height('100%')
+      }
+      .width(this.videoPlayerWidth)
+      .height('100%')
+      .backgroundColor(Color.Black)
+      
+      // 右侧：视频信息栏
+      Column() {
+        // 视频标题
+        Row() {
+          Text($r('app.string.Video_name'))
+            .fontSize('20fp')
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Color.White)
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .width('100%')
+        .padding({ left: '16vp', right: '16vp', top: '16vp', bottom: '8vp' })
+        
+        // 分隔线
+        Divider()
+          .color('#333333')
+          .margin({ left: '16vp', right: '16vp' })
+        
+        // 选集标题
+        Row() {
+          Text($r('app.string.Episodes'))
+            .fontSize('16fp')
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#AAAAAA')
+          
+          Blank()
+          
+          // Upload button
+          Image($r('app.media.ic_upload'))
+            .width(28)
+            .height(28)
+            .onClick(() => {
+              this.viewModel.uploadVideo();
+            })
+        }
+        .width('100%')
+        .padding({ left: '16vp', right: '16vp', top: '12vp', bottom: '8vp' })
+        
+        // 选集列表（网格布局）
+        Grid() {
+          ForEach(this.videoSources, (item: resourceManager.RawFileDescriptor, index: number) => {
+            GridItem() {
+              Column() {
+                Text((index + 1).toString())
+                  .fontSize('16fp')
+                  .fontColor(this.viewModel.chooseNumber === index && this.viewModel.isUse ? '#F67609' : '#FFFFFF')
+              }
+              .width('100%')
+              .height('100%')
+              .backgroundColor(this.viewModel.chooseNumber === index && this.viewModel.isUse ? '#3D3D3D' : '#2A2A2A')
+              .borderRadius(8)
+              .justifyContent(FlexAlign.Center)
+              .borderColor(this.viewModel.chooseNumber === index && this.viewModel.isUse ? '#F67609' : 'transparent')
+              .borderWidth(2)
+              .onClick(() => {
+                this.onVideoSelected(index, item);
+              })
+            }
+          }, (item: resourceManager.RawFileDescriptor, index: number) => {
+            return 'item: ' + item.toString() + 'index: ' + index.toString();
+          })
+        }
+        .columnsTemplate('1fr 1fr 1fr')
+        .rowsGap('8vp')
+        .columnsGap('8vp')
+        .width('100%')
+        .height('180vp')
+        .padding({ left: '16vp', right: '16vp' })
+        
+        // 分隔线
+        Divider()
+          .color('#333333')
+          .margin({ left: '16vp', right: '16vp', top: '8vp' })
+        
+        // 评论区域
+        if (this.viewModel.isCommentVisible) {
+          Column() {
+            Row() {
+              Text('评论')
+                .fontSize('16fp')
+                .fontWeight(FontWeight.Medium)
+                .fontColor('#AAAAAA')
+              
+              Blank()
+              
+              Text('✕')
+                .fontSize('16fp')
+                .fontColor('#666666')
+                .onClick(() => {
+                  this.viewModel.toggleCommentPanel();
+                })
+            }
+            .width('100%')
+            .padding({ left: '16vp', right: '16vp', top: '12vp', bottom: '8vp' })
+            
+            CommentListView({
+              viewModel: this.viewModel
+            })
+          }
+          .width('100%')
+          .layoutWeight(1)
+        } else {
+          // 评论按钮
+          Row() {
+            Text('查看评论')
+              .fontSize('14fp')
+              .fontColor('#F67609')
+            
+            Blank()
+            
+            Image($r('app.media.ic_public_play'))
+              .width(16)
+              .height(16)
+              .fillColor('#F67609')
+              .rotate({ angle: 90 })
+          }
+          .width('100%')
+          .padding({ left: '16vp', right: '16vp', top: '12vp', bottom: '8vp' })
+          .onClick(() => {
+            this.viewModel.toggleCommentPanel();
+          })
+          
+          Blank()
+        }
+      }
+      .layoutWeight(1)
+      .height('100%')
+      .backgroundColor('#1A1A1A')
+    }
+    .width('100%')
+    .height('100%')
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+  }
+
+  /**
+   * 手机竖屏/全屏布局
+   */
+  @Builder
+  PhonePortraitLayout() {
     Column() {
       Stack({ alignContent: Alignment.Center }) {
         this.XComponentView()
@@ -77,14 +347,17 @@ export struct VideoPlayView {
         })
         this.ControlOverlay()
         this.SpeedListOverlay()
-        // Danmaku input overlay
-        this.DanmakuInputOverlay()
       }
       .width('100%')
-      .height(this.isFullScreen ? '100%' : '35%')
+      .height(this.isFullScreen ? '100%' : this.videoPlayerHeight)
 
-      this.VideoSelectionView()
-      this.VideoPlaceholderView()
+      // Show either video selection or comment panel
+      if (this.viewModel.isCommentVisible && !this.isFullScreen) {
+        this.CommentPanelView()
+      } else {
+        this.VideoSelectionView()
+        this.VideoPlaceholderView()
+      }
     }
     .height('100%')
     .width('100%')
@@ -147,32 +420,50 @@ export struct VideoPlayView {
   @Builder
   PlaybackControls() {
     Row() {
-      this.PlayPauseButton()
+      // Left side: Play button with Comment button below
+      Column() {
+        this.PlayPauseButton()
+        this.CommentButton()
+      }
+      .width('10%')
+      .height('100%')
+      .justifyContent(FlexAlign.SpaceEvenly)
+      
+      // Center: Time slider
       this.TimeSlider()
-      this.SpeedButton()
-      this.DanmakuButton()
-      this.FullScreenButton()
+      
+      // Right side: Speed, Danmaku, Filter, Fullscreen buttons
+      Row() {
+        this.SpeedButton()
+        this.DanmakuButton()
+        this.FilterButton()
+        this.DistributedButton()
+        this.FullScreenButton()
+      }
+      .width(this.isFullScreen ? '35%' : '45%')
+      .height('100%')
+      .justifyContent(FlexAlign.SpaceEvenly)
     }
     .width('100%')
     .height('16%')
-    .padding(this.isFullScreen ? { left: '36vp', right: '36vp' } : 0)
+    .padding({ left: '8vp', right: '8vp' })
     .justifyContent(FlexAlign.SpaceBetween)
     .visibility(this.viewModel.isSpeedListVisible ? Visibility.Hidden : Visibility.Visible)
   }
 
   @Builder
   PlayPauseButton() {
-    Row() {
+    Column() {
       Image(this.viewModel.playState === PlayerState.PLAYING ?
         $r('app.media.ic_public_pause') : $r('app.media.ic_public_play'))
-        .width('25vp')
-        .height('25vp')
+        .width('30vp')
+        .height('30vp')
         .onClick(() => {
           this.viewModel.playState = this.viewModel.togglePlayPause(this.viewModel.playState);
         })
     }
-    .width('25vp')
-    .height('100%')
+    .width('100%')
+    .height('48%')
     .justifyContent(FlexAlign.Center)
   }
 
@@ -188,7 +479,7 @@ export struct VideoPlayView {
         min: 0,
         max: this.viewModel.durationTime
       })
-        .width(this.isFullScreen ? '90%' : '70%')
+        .width(this.isFullScreen ? '75%' : '55%')
         .selectedColor('#F67609')
         .trackColor('#464642')
         .enabled(!this.viewModel.isSeek)
@@ -200,19 +491,19 @@ export struct VideoPlayView {
         .fontColor(Color.White)
         .fontSize('12fp')
     }
-    .width(this.isFullScreen ? '90%' : '70%')
+    .width(this.isFullScreen ? '60%' : '50%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
   }
 
   @Builder
   SpeedButton() {
-    Row() {
+    Column() {
       Text(this.viewModel.speedText)
         .fontColor(Color.White)
         .fontSize('14fp')
     }
-    .width(this.isFullScreen ? '5%' : '14%')
+    .width('25%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
     .onClick(() => {
@@ -221,14 +512,24 @@ export struct VideoPlayView {
   }
 
   @Builder
+  DistributedButton() {
+    Column() {
+      DistributedControlView()
+    }
+    .width('25%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
   FullScreenButton() {
     if (!this.isFullScreen) {
-      Row() {
+      Column() {
         Image($r('app.media.ic_public_enlarge'))
-          .width('25vp')
-          .height('25vp')
+          .width('26vp')
+          .height('26vp')
       }
-      .width('8%')
+      .width('25%')
       .height('100%')
       .justifyContent(FlexAlign.Center)
       .onClick(() => {
@@ -239,17 +540,48 @@ export struct VideoPlayView {
 
   @Builder
   DanmakuButton() {
-    Row() {
+    Column() {
       Text('弹幕')
         .fontSize('14fp')
         .fontColor(this.viewModel.isDanmakuInputVisible ? '#F67609' : Color.White)
         .fontWeight(FontWeight.Medium)
     }
-    .width('8%')
+    .width('25%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
     .onClick(() => {
       this.viewModel.toggleDanmakuInput();
+    })
+  }
+  
+  @Builder
+  CommentButton() {
+    Column() {
+      Text('评论')
+        .fontSize('14fp')
+        .fontColor(this.viewModel.isCommentVisible ? '#F67609' : Color.White)
+        .fontWeight(FontWeight.Medium)
+    }
+    .width('100%')
+    .height('48%')
+    .justifyContent(FlexAlign.Center)
+    .onClick(() => {
+      this.viewModel.toggleCommentPanel();
+    })
+  }
+  
+  @Builder
+  FilterButton() {
+    Column() {
+      Image($r('app.media.ic_filter'))
+        .width('24vp')
+        .height('24vp')
+    }
+    .width('25%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .onClick(() => {
+      this.viewModel.toggleFilterPanel();
     })
   }
 
@@ -303,6 +635,123 @@ export struct VideoPlayView {
   }
 
   @Builder
+  FilterPanelOverlay() {
+    Column() {
+      // Header
+      Row() {
+        Text('视频滤镜')
+          .fontSize('18fp')
+          .fontColor(Color.White)
+          .fontWeight(FontWeight.Bold)
+        
+        Blank()
+        
+        // Close button
+        Text('✕')
+          .fontSize('20fp')
+          .fontColor(Color.White)
+          .onClick(() => {
+            this.viewModel.toggleFilterPanel();
+          })
+      }
+      .width('100%')
+      .height('50vp')
+      .padding({ left: '16vp', right: '16vp' })
+      
+      // Current filter indicator
+      Row() {
+        Text('当前滤镜: ')
+          .fontSize('14fp')
+          .fontColor('#AAAAAA')
+        Text(this.viewModel.currentFilterName)
+          .fontSize('14fp')
+          .fontColor('#F67609')
+          .fontWeight(FontWeight.Medium)
+      }
+      .width('100%')
+      .padding({ left: '16vp', right: '16vp', bottom: '12vp' })
+      
+      // Filter grid
+      Grid() {
+        ForEach(this.viewModel.allFilters, (filter: FilterInfo, index: number) => {
+          GridItem() {
+            Column() {
+              // Filter icon
+              Text(filter.icon)
+                .fontSize('32fp')
+                .width('48vp')
+                .height('48vp')
+                .textAlign(TextAlign.Center)
+              
+              // Filter name
+              Text(filter.name)
+                .fontSize('12fp')
+                .fontColor(this.viewModel.currentFilterType === filter.type ? '#F67609' : Color.White)
+                .fontWeight(this.viewModel.currentFilterType === filter.type ? FontWeight.Bold : FontWeight.Normal)
+                .margin({ top: '4vp' })
+            }
+            .width('100%')
+            .height('100%')
+            .justifyContent(FlexAlign.Center)
+            .padding('8vp')
+            .borderRadius('8vp')
+            .backgroundColor(this.viewModel.currentFilterType === filter.type ? '#20F67609' : '#10FFFFFF')
+            .onClick(() => {
+              this.viewModel.applyFilter(filter.type);
+            })
+          }
+        }, (filter: FilterInfo) => filter.type)
+      }
+      .columnsTemplate('1fr 1fr 1fr 1fr')
+      .rowsTemplate('1fr 1fr 1fr 1fr 1fr')
+      .columnsGap('8vp')
+      .rowsGap('8vp')
+      .width('100%')
+      .height('320vp')
+      .padding({ left: '16vp', right: '16vp' })
+      
+      // Footer with apply button
+      Row() {
+        Button('重置滤镜')
+          .fontSize('14fp')
+          .fontColor(Color.White)
+          .backgroundColor('#333333')
+          .borderRadius('20vp')
+          .width('40%')
+          .height('36vp')
+          .onClick(() => {
+            this.viewModel.applyFilter(VideoFilterType.NONE);
+          })
+        
+        Button('确认应用')
+          .fontSize('14fp')
+          .fontColor(Color.White)
+          .backgroundColor('#F67609')
+          .borderRadius('20vp')
+          .width('40%')
+          .height('36vp')
+          .onClick(() => {
+            this.viewModel.toggleFilterPanel();
+          })
+      }
+      .width('100%')
+      .height('60vp')
+      .justifyContent(FlexAlign.SpaceEvenly)
+      .padding({ top: '12vp' })
+    }
+    .width('100%')
+    .height('480vp')
+    .backgroundColor('#CC000000')
+    .borderRadius({ topLeft: '16vp', topRight: '16vp' })
+    .position({ x: 0, y: '100%' })
+    .translate({ y: this.viewModel.isFilterPanelVisible ? '-480vp' : '0vp' })
+    .animation({
+      duration: 300,
+      curve: Curve.EaseOut
+    })
+  }
+
+  @Builder
   VideoSelectionView() {
     Column() {
       Row() {
@@ -321,6 +770,16 @@ export struct VideoPlayView {
           .fontSize('16fp')
           .fontWeight(FontWeight.Regular)
           .fontColor(Color.White)
+        
+        Blank()
+        
+        // Upload button
+        Image($r('app.media.ic_upload'))
+          .width(32)
+          .height(32)
+          .onClick(() => {
+            this.viewModel.uploadVideo();
+          })
       }
       .width('100%')
       .height('20%')
@@ -380,28 +839,82 @@ export struct VideoPlayView {
 
   @Builder
   DanmakuInputOverlay() {
-    Stack({ alignContent: Alignment.Bottom }) {
-      if (this.viewModel.isDanmakuInputVisible) {
-        // Semi-transparent background
-        Blank()
-          .width('100%')
-          .height('100%')
-          .backgroundColor('#80000000')
-          .onClick(() => {
-            this.viewModel.hideDanmakuInput();
+    if (this.viewModel.isDanmakuInputVisible) {
+      // Use Stack with absolute positioning to cover the entire screen
+      Stack() {
+        // Semi-transparent background covering entire screen
+        Column() {
+          Blank()
+            .width('100%')
+            .height('100%')
+            .backgroundColor('#80000000')
+            .onClick(() => {
+              this.viewModel.hideDanmakuInput();
+            })
+        }
+        .width('100%')
+        .height('100%')
+        
+        // Danmaku input view at bottom - using absolute positioning
+        Column() {
+          DanmakuInputView({
+            viewModel: this.viewModel
           })
-
-        // Danmaku input view
-        DanmakuInputView({
-          viewModel: this.viewModel
-        })
-        .width('90%')
-        .margin({ bottom: '20vp' })
-        .align(Alignment.Bottom)
+        }
+        .width('100%')
+        .position({ x: 0, y: '100% - 350vp' }) // Position from bottom
+        .zIndex(1000)
       }
+      .width('100%')
+      .height('100%')
+      .position({ x: 0, y: 0 })
+      .zIndex(999) // Highest z-index
+    }
+  }
+  
+  @Builder
+  CommentPanelView() {
+    Column() {
+      // Comment header
+      Row() {
+        Text('评论')
+          .fontSize(18)
+          .fontColor('#333333')
+          .fontWeight(FontWeight.Bold)
+        
+        Blank()
+        
+        // Close button
+        Button({ type: ButtonType.Circle }) {
+          Text('✕')
+            .fontSize(18)
+            .fontColor('#999999')
+        }
+        .width(30)
+        .height(30)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          this.viewModel.toggleCommentPanel();
+        })
+      }
+      .width('100%')
+      .height(50)
+      .padding({ left: 16, right: 16 })
+      .backgroundColor('#FFFFFF')
+      .border({
+        width: { bottom: 1 },
+        color: { bottom: '#E0E0E0' }
+      })
+      
+      // Comment list with layoutWeight to fill remaining space
+      CommentListView({
+        viewModel: this.viewModel
+      })
+      .layoutWeight(1)
     }
     .width('100%')
-    .height('100%')
+    .height('65%')
+    .backgroundColor('#FFFFFF')
   }
 
   private async onVideoSelected(index: number, rawDes: resourceManager.RawFileDescriptor): Promise<void> {

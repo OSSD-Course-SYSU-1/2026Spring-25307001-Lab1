@@ -23,6 +23,14 @@
     {
       "name": "Video_name",
       "value": "Sample videos"
+    },
+    {
+      "name": "distributed_permission_reason",
+      "value": "允许视频播放状态在设备间同步，实现无缝接续播放"
+    },
+    {
+      "name": "device_info_permission_reason",
+      "value": "获取设备信息用于分布式视频播放"
     }
   ]
 }

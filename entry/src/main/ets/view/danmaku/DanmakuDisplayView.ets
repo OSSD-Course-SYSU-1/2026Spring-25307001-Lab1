@@ -17,122 +17,139 @@ import { DanmakuItem, DanmakuType } from '../../model/DanmakuModel';
 import { VideoPlayViewModel } from '../../viewmodel/VideoPlayViewModel';
 
 @Component
+struct DanmakuItemView {
+  @ObjectLink danmaku: DanmakuItem;
+  @Prop containerWidth: number = 0;
+  @Prop containerHeight: number = 0;
+  @Prop index: number = 0;
+  @Prop danmakuOpacity: number = 1.0;
+
+  build() {
+    Text(this.danmaku.content)
+      .fontSize(this.danmaku.fontSize)
+      .fontColor(this.danmaku.color)
+      .fontWeight(FontWeight.Medium)
+      .opacity(this.danmakuOpacity)
+      .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+      .backgroundColor('#1A000000')
+      .borderRadius(4)
+      .position({
+        x: this.getDanmakuX(),
+        y: this.getDanmakuY()
+      })
+  }
+
+  private getDanmakuX(): number {
+    if (this.containerWidth === 0) {
+      return 0;
+    }
+    
+    switch (this.danmaku.type) {
+      case DanmakuType.TOP:
+      case DanmakuType.BOTTOM:
+        // Center horizontally
+        return this.containerWidth / 2 - this.danmaku.estimatedWidth / 2;
+      case DanmakuType.NORMAL:
+      default:
+        // Scrolling danmaku - use positionX directly
+        return this.danmaku.positionX;
+    }
+  }
+
+  private getDanmakuY(): number {
+    if (this.containerHeight === 0) {
+      return 0;
+    }
+    
+    switch (this.danmaku.type) {
+      case DanmakuType.TOP:
+        // Top position - 10% from top
+        return this.containerHeight * 0.1;
+      case DanmakuType.BOTTOM:
+        // Bottom position - 10% from bottom
+        return this.containerHeight * 0.9 - 20;
+      case DanmakuType.NORMAL:
+      default:
+        // Distribute vertically - 8 rows
+        const rowHeight = this.containerHeight * 0.8 / 8;
+        return this.containerHeight * 0.1 + (this.index % 8) * rowHeight;
+    }
+  }
+}
+
+@Component
 export struct DanmakuDisplayView {
   @ObjectLink viewModel: VideoPlayViewModel;
   @Link isFullScreen: boolean;
-
-  @Builder
-  DanmakuItemView(danmaku: DanmakuItem, index: number) {
-    if (danmaku.isVisible) {
-      Text(danmaku.content)
-        .fontSize(`${danmaku.fontSize}fp`)
-        .fontColor(danmaku.color)
-        .fontWeight(FontWeight.Medium)
-        .opacity(this.viewModel.danmakuSettings.opacity)
-        .width('auto')
-        .height('auto')
-        .padding({ left: '8vp', right: '8vp', top: '4vp', bottom: '4vp' })
-        .backgroundColor('#1A000000')
-        .borderRadius('4vp')
-        .position({
-          x: danmaku.type === DanmakuType.NORMAL ? `${danmaku.positionX}vp` : '0vp',
-          y: this.getDanmakuYPosition(danmaku, index)
-        })
-    }
-  }
-
-  private getDanmakuYPosition(danmaku: DanmakuItem, index: number): string {
-    switch (danmaku.type) {
-      case DanmakuType.TOP:
-        return '10%';
-      case DanmakuType.BOTTOM:
-        return '90%';
-      case DanmakuType.NORMAL:
-      default:
-        // Distribute danmaku vertically for scrolling type
-        const positionPercentage = 10 + (index % 8) * 10; // 8 rows max
-        return `${positionPercentage}%`;
-    }
-  }
-
-  @Builder
-  DanmakuLayer() {
-    Stack({ alignContent: Alignment.TopStart }) {
-      ForEach(this.viewModel.danmakuList, (danmaku: DanmakuItem, index: number) => {
-        this.DanmakuItemView(danmaku, index)
-      }, (danmaku: DanmakuItem) => danmaku.id)
-    }
-    .width('100%')
-    .height(this.isFullScreen ? '100%' : '35%')
-    .visibility(this.viewModel.isDanmakuEnabled ? Visibility.Visible : Visibility.Hidden)
-  }
-
-  @Builder
-  ControlOverlay() {
-    if (this.viewModel.isDanmakuEnabled) {
-      Column({ space: '8vp' }) {
-      // Danmaku toggle button
-      Row() {
-        Text(this.viewModel.isDanmakuEnabled ? '弹幕开' : '弹幕关')
-          .fontSize('12fp')
-          .fontColor(Color.White)
-          .onClick(() => {
-            this.viewModel.toggleDanmakuEnabled();
-          })
-      }
-      .width('auto')
-      .height('auto')
-      .padding({ left: '12vp', right: '12vp', top: '6vp', bottom: '6vp' })
-      .backgroundColor('#4D000000')
-      .borderRadius('16vp')
-      .alignItems(VerticalAlign.Center)
-
-      // Send danmaku button
-      Row() {
-        Text('发弹幕')
-          .fontSize('12fp')
-          .fontColor(Color.White)
-          .onClick(() => {
-            this.viewModel.toggleDanmakuInput();
-          })
-      }
-      .width('auto')
-      .height('auto')
-      .padding({ left: '12vp', right: '12vp', top: '6vp', bottom: '6vp' })
-      .backgroundColor('#4D000000')
-      .borderRadius('16vp')
-      .alignItems(VerticalAlign.Center)
-
-      // Clear danmaku button
-      Row() {
-        Text('清空')
-          .fontSize('12fp')
-          .fontColor(Color.White)
-          .onClick(() => {
-            this.viewModel.clearAllDanmaku();
-          })
-      }
-      .width('auto')
-      .height('auto')
-      .padding({ left: '12vp', right: '12vp', top: '6vp', bottom: '6vp' })
-      .backgroundColor('#4D000000')
-      .borderRadius('16vp')
-      .alignItems(VerticalAlign.Center)
-    }
-    .position({ x: '16vp', y: '16vp' })
-    .visibility(this.viewModel.isUse ? Visibility.Visible : Visibility.Hidden)
-    }
-  }
+  
+  @State containerWidth: number = 0;
+  @State containerHeight: number = 0;
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
-      // Danmaku display layer
-      this.DanmakuLayer()
+      // Danmaku items
+      ForEach(this.viewModel.danmakuList, (danmaku: DanmakuItem, index: number) => {
+        if (danmaku.isVisible && this.viewModel.isDanmakuEnabled) {
+          DanmakuItemView({
+            danmaku: danmaku,
+            containerWidth: this.containerWidth,
+            containerHeight: this.containerHeight,
+            index: index,
+            danmakuOpacity: this.viewModel.danmakuSettings.opacity
+          })
+        }
+      }, (danmaku: DanmakuItem) => danmaku.id)
 
       // Control overlay
-      this.ControlOverlay()
+      Column({ space: 8 }) {
+        Row() {
+          Text(this.viewModel.isDanmakuEnabled ? '弹幕开' : '弹幕关')
+            .fontSize(12)
+            .fontColor(this.viewModel.isDanmakuEnabled ? Color.Green : Color.Gray)
+            .onClick(() => {
+              this.viewModel.toggleDanmakuEnabled();
+            })
+        }
+        .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+        .backgroundColor('#4D000000')
+        .borderRadius(16)
+
+        Row() {
+          Text('发弹幕')
+            .fontSize(12)
+            .fontColor(Color.White)
+            .onClick(() => {
+              this.viewModel.toggleDanmakuInput();
+            })
+        }
+        .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+        .backgroundColor('#4D000000')
+        .borderRadius(16)
+
+        Row() {
+          Text('清空')
+            .fontSize(12)
+            .fontColor(Color.White)
+            .onClick(() => {
+              this.viewModel.clearAllDanmaku();
+            })
+        }
+        .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+        .backgroundColor('#4D000000')
+        .borderRadius(16)
+      }
+      .position({ x: 16, y: 16 })
     }
     .width('100%')
-    .height(this.isFullScreen ? '100%' : '35%')
+    .height('100%')
+    .clip(false) // Allow danmaku to be visible outside container bounds
+    .onAreaChange((oldValue: Area, newValue: Area) => {
+      this.containerWidth = newValue.width as number;
+      this.containerHeight = newValue.height as number;
+      // Update viewModel's screenWidth for danmaku positioning
+      if (this.containerWidth > 0) {
+        this.viewModel.screenWidth = this.containerWidth;
+      }
+    })
   }
 }
